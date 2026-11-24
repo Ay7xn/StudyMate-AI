@@ -491,5 +491,237 @@ TOOL_FUNCTIONS = {
     "evaluate_quiz": evaluate_quiz,
     "generate_study_notes": generate_study_notes,
     "create_study_plan": create_study_plan,
+    "calculate": calculatequestion_number", "?")
+        if item.get("is_correct") is True:
+            lines.append(f"Q{number}: Correct. {item.get('feedback', '')}")
+        else:
+            lines.append(
+                f"Q{number}: Wrong. Your answer: {item.get('student_answer', '-')}. "
+                f"Correct answer: {item.get('correct_answer', '-')}. "
+                f"{item.get('feedback', '')}"
+            )
+    return "\n".join(lines)
+
+
+def generate_study_notes(topic, detail_level="standard"):
+    """Tool 4: Create revision notes (the app lets the student download them)."""
+    if not topic or not str(topic).strip():
+        return "Error: please tell me the topic for the notes."
+    detail_level = str(detail_level).lower().strip()
+    if detail_level not in ("short", "standard", "detailed"):
+        detail_level = "standard"
+
+    prompt = (
+        f"Write {detail_level} revision notes on '{topic}' for a student.\n"
+        "Format:\n"
+        "- Start with the title in CAPITAL LETTERS\n"
+        "- Use section headings in CAPITAL LETTERS (e.g. KEY CONCEPTS, "
+        "IMPORTANT TERMS, EXAMPLES, QUICK REVISION POINTS)\n"
+        "- Under each heading use short bullet points starting with '- '\n"
+        "- Leave a blank line between sections\n"
+        "- Do not use symbols like ** or #"
+    )
+    notes = ask_gemini(prompt)
+    header = f"STUDYMATE AI - STUDY NOTES\nTopic: {topic}\n" + "=" * 40 + "\n\n"
+    return header + notes
+
+
+def create_study_plan(subjects, hours_per_day, exam_date):
+    """Tool 5: Create a study timetable. Dates and hours are worked out in Python."""
+    if not subjects or not str(subjects).strip():
+        return "Error: please tell me which subjects you want to study."
+
+    # Check study hours
+    try:
+        hours_per_day = float(hours_per_day)
+    except (ValueError, TypeError):
+        return "Error: study hours per day must be a number, like 3."
+    if hours_per_day <= 0 or hours_per_day > 16:
+        return "Error: study hours per day must be between 0 and 16."
+
+    # Check exam date
+    try:
+        exam_day = datetime.strptime(str(exam_date).strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return "Error: the exam date must look like 2026-12-20 (year-month-day)."
+    days_left = (exam_day - date.today()).days
+    if days_left < 1:
+        return "Error: the exam date must be in the future."
+
+    # Simple calculations done by Python
+    subject_list = [s.strip() for s in str(subjects).split(",") if s.strip()]
+    if not subject_list:
+        return "Error: please list your subjects separated by commas."
+    total_hours = round(days_left * hours_per_day, 1)
+    hours_per_subject = round(total_hours / len(subject_list), 1)
+
+    prompt = (
+        "Create a realistic study timetable for a student.\n"
+        f"- Today's date: {date.today()}\n"
+        f"- Exam date: {exam_day} ({days_left} days left)\n"
+        f"- Subjects: {', '.join(subject_list)}\n"
+        f"- Study time available: {hours_per_day} hours per day "
+        f"(about {total_hours} hours in total, about {hours_per_subject} hours "
+        "per subject)\n\n"
+        "Rules:\n"
+        "- If there are 14 days or fewer, give a day-by-day plan. Otherwise "
+        "give a week-by-week plan plus a sample daily routine.\n"
+        "- Mix the subjects so the student does not get bored.\n"
+        "- Include short breaks and keep the last 1-2 days for revision.\n"
+        "- Present the plan as a markdown table, then add 3 short study tips."
+    )
+    return ask_gemini(prompt)
+
+
+# Operators the calculator is allowed to use
+ALLOWED_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+    ast.FloorDiv: operator.floordiv,
+}
+
+
+def evaluate_math_node(node):
+    """Safely calculate a parsed math expression (no eval(), so it is secure)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.BinOp) and type(node.op) in ALLOWED_OPERATORS:
+        left = evaluate_math_node(node.left)
+        right = evaluate_math_node(node.right)
+        if isinstance(node.op, ast.Pow) and abs(right) > 100:
+            raise ValueError("The power is too large.")
+        return ALLOWED_OPERATORS[type(node.op)](left, right)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        value = evaluate_math_node(node.operand)
+        return -value if isinstance(node.op, ast.USub) else value
+    raise ValueError("Only numbers and + - * / % // ** ( ) are allowed.")
+
+
+def calculate(expression):
+    """Tool 6: Calculator for basic maths."""
+    if not expression or not str(expression).strip():
+        return "Error: please give me a calculation, like 25 * 4 + 10."
+    cleaned = str(expression).replace("^", "**").replace("x", "*").replace("×", "*")
+    cleaned = cleaned.replace("÷", "/").replace(",", "")
+    try:
+        tree = ast.parse(cleaned.strip(), mode="eval")
+        result = evaluate_math_node(tree.body)
+    except ZeroDivisionError:
+        return "Error: you cannot divide by zero."
+    except (SyntaxError, ValueError) as error:
+        return f"Error: I could not calculate that. {error}"
+    if isinstance(result, float):
+        result = round(result, 10)
+        if result.is_integer():
+            result = int(result)
+    return f"{expression} = {result}"
+
+
+# ---------------------------------------------------------------
+# PART 3: TOOL DECLARATIONS (what Gemini reads to choose a tool)
+# ---------------------------------------------------------------
+
+TOOL_DECLARATIONS = [
+    {
+        "name": "explain_topic",
+        "description": "Explains an educational topic in simple language with "
+                       "examples. Use when the student wants to understand or "
+                       "learn a concept.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "The topic to explain"},
+                "level": {"type": "string", "enum": ["beginner", "intermediate", "advanced"],
+                          "description": "Student's level. Default beginner."},
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "generate_quiz",
+        "description": "Creates multiple-choice quiz questions (without answers) "
+                       "on a topic. Use when the student wants a quiz or practice questions.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Quiz topic"},
+                "difficulty": {"type": "string", "enum": ["easy", "medium", "hard"],
+                               "description": "Difficulty level. Default medium."},
+                "num_questions": {"type": "integer",
+                                  "description": "Number of questions (1-15). Default 5."},
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "evaluate_quiz",
+        "description": "Checks the student's answers to a quiz, calculates marks "
+                       "and gives feedback. Use after the student submits answers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "quiz_questions": {"type": "string",
+                                   "description": "The complete quiz questions with options, copied from the conversation"},
+                "student_answers": {"type": "string",
+                                    "description": "The student's answers, e.g. '1-A, 2-C, 3-B'"},
+            },
+            "required": ["quiz_questions", "student_answers"],
+        },
+    },
+    {
+        "name": "generate_study_notes",
+        "description": "Creates well-organised revision notes on a topic that the "
+                       "student can download. Use when the student asks for notes.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Topic for the notes"},
+                "detail_level": {"type": "string", "enum": ["short", "standard", "detailed"],
+                                 "description": "How detailed the notes should be. Default standard."},
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "create_study_plan",
+        "description": "Creates a study timetable from subjects, daily study hours "
+                       "and exam date. Use when the student wants a study plan or timetable.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subjects": {"type": "string",
+                             "description": "Subjects separated by commas, e.g. 'Maths, Physics'"},
+                "hours_per_day": {"type": "number", "description": "Study hours available per day"},
+                "exam_date": {"type": "string", "description": "Exam date in YYYY-MM-DD format"},
+            },
+            "required": ["subjects", "hours_per_day", "exam_date"],
+        },
+    },
+    {
+        "name": "calculate",
+        "description": "Calculates a mathematical expression using + - * / % // ** "
+                       "and brackets. Use for any arithmetic.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string", "description": "The expression, e.g. '(25 * 4) + 18'"},
+            },
+            "required": ["expression"],
+        },
+    },
+]
+
+# Connects a tool name (text) to the real Python function
+TOOL_FUNCTIONS = {
+    "explain_topic": explain_topic,
+    "generate_quiz": generate_quiz,
+    "evaluate_quiz": evaluate_quiz,
+    "generate_study_notes": generate_study_notes,
+    "create_study_plan": create_study_plan,
     "calculate": calculate
 }
