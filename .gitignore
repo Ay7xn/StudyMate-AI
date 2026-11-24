@@ -1,0 +1,13 @@
+# Secrets: NEVER upload these
+.streamlit/secrets.toml
+secrets.toml
+.env
+
+# Python files
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# System files
+.DS_Store
