@@ -492,3 +492,4 @@ TOOL_FUNCTIONS = {
     "generate_study_notes": generate_study_notes,
     "create_study_plan": create_study_plan,
     "calculate": calculate
+}
